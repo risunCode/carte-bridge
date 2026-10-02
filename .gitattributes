@@ -1,0 +1,12 @@
+# Normalize line endings to LF in the repository and in the working tree.
+#
+# This project deploys to Linux containers and Linux-based runtimes, where a
+# stray CRLF in a shell script or a Dockerfile can break a build in ways that
+# are hard to see. Forcing LF everywhere removes that class of problem.
+* text=auto eol=lf
+
+# Binary-ish files that must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

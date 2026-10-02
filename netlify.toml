@@ -1,0 +1,17 @@
+[build.environment]
+  # The core uses Web Request/Response and node:dns, both of which need a
+  # modern runtime. Pinning it avoids depending on the account default.
+  NODE_VERSION = "22"
+
+[functions]
+  # Netlify's default is "netlify/functions". Pointing it at "netlify" instead
+  # drops a folder level. It cannot be the repo root: Netlify deploys every
+  # supported file in this directory as a function, so "." would try to deploy
+  # app/*.js and test/*.js too.
+  directory = "netlify"
+  node_bundler = "esbuild"
+
+# The function declares its own route via `export const config = { path: '/*' }`
+# in netlify/bridge.js, so no redirect rule is needed here. There is also no
+# publish directory: the bridge serves its landing page from the core, so it has
+# no static assets to deploy.

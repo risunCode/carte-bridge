@@ -1,0 +1,23 @@
+{
+  "name": "carte-bridge",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Universal stateless HTTP bridge. Deploys to Railway, Vercel, Netlify, Deno Deploy, or Docker from one codebase.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "start:deno": "deno run --allow-net --allow-env deno/main.js",
+    "test": "node --test --test-concurrency=1 --test-timeout=15000 \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "bridge",
+    "proxy",
+    "serverless"
+  ],
+  "license": "MIT"
+}

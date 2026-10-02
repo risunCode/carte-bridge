@@ -1,0 +1,35 @@
+services:
+  bridge:
+    build: .
+    image: carte-bridge:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # Fail-closed guardrail: an empty BRIDGE_KEY means an open bridge. The
+      # variable is passed through even when unset so that the warning the
+      # server logs on startup is visible in `docker compose logs`.
+      BRIDGE_KEY: ${BRIDGE_KEY:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      BLOCK_PRIVATE: ${BLOCK_PRIVATE:-true}
+      ROUTES: ${ROUTES:-}
+      FALLBACKS: ${FALLBACKS:-}
+      REQUEST_TIMEOUT_MS: ${REQUEST_TIMEOUT_MS:-30000}
+      STREAM_IDLE_TIMEOUT_MS: ${STREAM_IDLE_TIMEOUT_MS:-60000}
+      MAX_BUFFER_BYTES: ${MAX_BUFFER_BYTES:-1048576}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      EGRESS_IP_URL: ${EGRESS_IP_URL:-https://api.ipify.org}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+    # No volume: the bridge holds no state. A restart loses nothing.
+
+  # Optional: uncomment to run the bridge behind nginx, which is the usual
+  # reason to set TRUST_PROXY=true.
+  #
+  # nginx:
+  #   image: nginx:alpine
+  #   depends_on: [bridge]
+  #   ports: ["80:80"]
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro

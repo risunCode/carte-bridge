@@ -1,0 +1,13 @@
+{
+  "tasks": {
+    "start": "deno run --allow-net --allow-env deno/main.js"
+  },
+  "deploy": {
+    "org": "",
+    "app": "carte-bridge"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "semiColons": true
+  }
+}
