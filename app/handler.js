@@ -61,6 +61,31 @@ function isControlRequest(url, hasBridgeTarget) {
 }
 
 const TEXT_HEADERS = { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' };
+function bridgeAuthFailure() {
+  const err = new BridgeError(401, 'bridge_auth_required', 'Bridge credentials are required');
+  err.headers = { 'www-authenticate': 'Basic realm="carte-bridge"' };
+  return err;
+}
+
+function assertBridgeAuth(request, config) {
+  if (config.bridgeAuthMode !== 'basic') return;
+
+  const value = request.headers.get('x-bridge-auth') || '';
+  const match = /^Basic\s+(.+)$/i.exec(value);
+  if (!match) throw bridgeAuthFailure();
+
+  let decoded;
+  try {
+    decoded = atob(match[1]);
+  } catch {
+    throw bridgeAuthFailure();
+  }
+
+  if (decoded !== `${config.bridgeUsername}:${config.bridgePassword}`) {
+    throw bridgeAuthFailure();
+  }
+}
+
 
 async function handleControl(url, config, context) {
   if (url.pathname === '/healthz') {
@@ -208,6 +233,8 @@ export function createApp(options = {}) {
           clientIp: context.clientIp || '',
         });
       }
+
+      assertBridgeAuth(request, config);
 
       const { url: target, matchedBy, route } = resolveTarget(url, {
         absoluteTarget: context.absoluteTarget ?? null,

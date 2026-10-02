@@ -14,8 +14,25 @@ test('empty environment yields working defaults', () => {
   assert.equal(c.blockPrivate, true, 'SSRF guard is on by default');
   assert.equal(c.requestTimeoutMs, 30000);
   assert.equal(c.streamHeartbeatMs, 15000);
+  assert.equal(c.bridgeAuthMode, 'none');
+  assert.equal(c.bridgeUsername, '');
+  assert.equal(c.bridgePassword, '');
   assert.equal(c.maxBufferBytes, 1048576);
 });
+test('bridge authentication accepts explicit credentials', () => {
+  const c = loadConfig(
+    {
+      BRIDGE_AUTH_MODE: 'basic',
+      BRIDGE_USERNAME: 'alice',
+      BRIDGE_PASSWORD: 'secret',
+    },
+    { onWarn: noop },
+  );
+  assert.equal(c.bridgeAuthMode, 'basic');
+  assert.equal(c.bridgeUsername, 'alice');
+  assert.equal(c.bridgePassword, 'secret');
+});
+
 
 test('booleans accept the usual spellings', () => {
   for (const v of ['1', 'true', 'TRUE', 'yes', 'on']) {

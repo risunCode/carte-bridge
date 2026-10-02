@@ -556,6 +556,38 @@ test('bridge headers forward the target without a query URL', async () => {
   }
 });
 
+test('optional bridge authentication protects relay requests only', async () => {
+  const upstream = await startUpstream();
+  const bridge = await startBridge({
+    BRIDGE_AUTH_MODE: 'basic',
+    BRIDGE_USERNAME: 'pool-user',
+    BRIDGE_PASSWORD: 'pool-pass',
+  });
+  try {
+    const targetHeaders = {
+      'x-bridge-target': upstream.base,
+      'x-bridge-path': '/echo',
+    };
+    const unauthenticated = await fetch(`${bridge.base}/`, { headers: targetHeaders });
+    assert.equal(unauthenticated.status, 401);
+
+    const authenticated = await fetch(`${bridge.base}/`, {
+      headers: {
+        ...targetHeaders,
+        'x-bridge-auth': `Basic ${Buffer.from('pool-user:pool-pass').toString('base64')}`,
+        authorization: 'Bearer provider-token',
+      },
+    });
+    assert.equal(authenticated.status, 200);
+    const body = await authenticated.json();
+    assert.equal(body.headers.authorization, 'Bearer provider-token');
+    assert.equal(body.headers['x-bridge-auth'], undefined);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
 
 test('the status page shows the client IP and reports byte counters', async () => {
   const upstream = await startUpstream();

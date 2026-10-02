@@ -185,6 +185,17 @@ export function loadConfig(env = environment, { onWarn = () => {} } = {}) {
     host: env.HOST || '0.0.0.0',
 
     allowedHosts: list(env.ALLOWED_HOSTS),
+    // Relay authentication is opt-in. It uses x-bridge-auth so the caller's
+    // upstream Authorization header remains available to the provider.
+    bridgeAuthMode:
+      String(env.BRIDGE_AUTH_MODE || (env.BRIDGE_USERNAME && env.BRIDGE_PASSWORD ? 'basic' : 'none'))
+        .trim()
+        .toLowerCase() === 'basic'
+        ? 'basic'
+        : 'none',
+    bridgeUsername: String(env.BRIDGE_USERNAME ?? ''),
+    bridgePassword: String(env.BRIDGE_PASSWORD ?? ''),
+
     blockPrivate: bool(env.BLOCK_PRIVATE, true),
     routes,
     fallbacks,
