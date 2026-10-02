@@ -24,7 +24,6 @@ export class BridgeError extends Error {
 }
 
 export const badRequest = (code, message) => new BridgeError(400, code, message);
-export const unauthorized = (message = 'bridge key required') => new BridgeError(401, 'unauthorized', message);
 export const forbidden = (code, message) => new BridgeError(403, code, message);
 export const notFound = (code, message) => new BridgeError(404, code, message);
 export const badGateway = (message, cause) => new BridgeError(502, 'upstream_unreachable', message, { cause });
@@ -184,8 +183,6 @@ export function loadConfig(env = environment, { onWarn = () => {} } = {}) {
   return Object.freeze({
     port: int(env.PORT, 8080, { min: 1, max: 65535 }),
     host: env.HOST || '0.0.0.0',
-
-    bridgeKey: env.BRIDGE_KEY || '',
 
     allowedHosts: list(env.ALLOWED_HOSTS),
     blockPrivate: bool(env.BLOCK_PRIVATE, true),

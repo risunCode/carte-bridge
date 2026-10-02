@@ -6,7 +6,7 @@
 // no adapter to reason about.
 
 import { loadConfig, createLogger, BridgeError, environment } from './core.js';
-import { createAuth, createGuard } from './policy.js';
+import { createGuard } from './policy.js';
 import { createResolver } from './target.js';
 import { createForwarder } from './forward.js';
 import { createStats, createEgressIp, countingStream, formatBytes, formatSpeed } from './stats.js';
@@ -24,7 +24,7 @@ const STATUS_TEXT = {
   504: 'Gateway Timeout',
 };
 
-function errorResponse(err, { corsOrigin, requestId }) {
+function errorResponse(err, { corsOrigin }) {
   const status = err instanceof BridgeError ? err.status : 500;
   const code = err instanceof BridgeError ? err.code : 'internal_error';
   const message =
@@ -37,17 +37,11 @@ function errorResponse(err, { corsOrigin, requestId }) {
   if (err instanceof BridgeError && err.headers) {
     for (const [k, v] of Object.entries(err.headers)) headers.set(k, v);
   }
-  if (status === 401) {
-    headers.set('www-authenticate', 'Bearer realm="carte-bridge"');
-  }
   if (corsOrigin) headers.set('access-control-allow-origin', corsOrigin);
-  if (requestId) headers.set('x-bridge-id', requestId);
 
   return new Response(
     JSON.stringify({
       error: { code, message, status, text: STATUS_TEXT[status] || 'Error' },
-      bridge: 'carte-bridge',
-      ...(requestId ? { requestId } : {}),
     }),
     { status, headers },
   );
@@ -63,19 +57,11 @@ function isControlRequest(url) {
   );
 }
 
-// Every response carries the request id, control responses included, so a log
-// line can always be tied back to the response an operator is looking at.
-function withRequestId(response, requestId) {
-  if (!requestId) return response;
-  response.headers.set('x-bridge-id', requestId);
-  return response;
-}
-
 const TEXT_HEADERS = { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' };
 
-async function handleControl(url, config, requestId, context) {
+async function handleControl(url, config, context) {
   if (url.pathname === '/healthz') {
-    return withRequestId(new Response('ok', { status: 200, headers: TEXT_HEADERS }), requestId);
+    return new Response('ok', { status: 200, headers: TEXT_HEADERS });
   }
 
   // The status page. Plain text by choice: a bridge host is probed constantly,
@@ -93,39 +79,32 @@ async function handleControl(url, config, requestId, context) {
     }
 
     const body = renderStatus({ config, stats, clientIp, egressIp, egressError });
-    return withRequestId(new Response(body, { status: 200, headers: TEXT_HEADERS }), requestId);
+    return new Response(body, { status: 200, headers: TEXT_HEADERS });
   }
 
   // Machine-readable counters, for a dashboard or a health poller that wants
   // the numbers without parsing the text page.
   if (url.pathname === '/stats') {
     const snap = context.stats.snapshot();
-    return withRequestId(
-      Response.json(
-        {
-          bridge: 'carte-bridge',
-          bytesPerSecond: Math.round(snap.bytesPerSecond),
-          totalBytes: snap.totalBytes,
-          totalBytesHuman: formatBytes(snap.totalBytes),
-          speedHuman: formatSpeed(snap.bytesPerSecond),
-          totalRequests: snap.totalRequests,
-          uptimeSeconds: snap.uptimeSeconds,
-        },
-        { headers: { 'cache-control': 'no-store' } },
-      ),
-      requestId,
+    return Response.json(
+      {
+        bytesPerSecond: Math.round(snap.bytesPerSecond),
+        totalBytes: snap.totalBytes,
+        totalBytesHuman: formatBytes(snap.totalBytes),
+        speedHuman: formatSpeed(snap.bytesPerSecond),
+        totalRequests: snap.totalRequests,
+        uptimeSeconds: snap.uptimeSeconds,
+      },
+      { headers: { 'cache-control': 'no-store' } },
     );
   }
 
   // /readyz reports what the bridge will actually do, which is the thing an
-  // operator needs to confirm after a deploy. It deliberately does not leak
-  // the bridge key or the full route table's credentials — routes are origins
-  // only, so they are safe to list.
+  // operator needs to confirm after a deploy. Routes are origins only, so
+  // they are safe to list.
   if (url.pathname === '/readyz') {
-    return withRequestId(Response.json({
+    return Response.json({
       status: 'ready',
-      bridge: 'carte-bridge',
-      auth: config.bridgeKey ? 'required' : 'open',
       ssrfGuard: config.blockPrivate ? 'enabled' : 'disabled',
       allowedHosts: config.allowedHosts.length ? config.allowedHosts : 'any-public-host',
       routes: Object.keys(config.routes),
@@ -133,14 +112,13 @@ async function handleControl(url, config, requestId, context) {
         requestMs: config.requestTimeoutMs,
         streamIdleMs: config.streamIdleTimeoutMs,
       },
-    }, { headers: { 'cache-control': 'no-store' } }), requestId);
+    }, { headers: { 'cache-control': 'no-store' } });
   }
 
   // /__bridge describes the accepted URL shapes — a self-documenting endpoint
   // so a client author does not have to read this file.
-  return withRequestId(Response.json(
+  return Response.json(
     {
-      bridge: 'carte-bridge',
       usage: {
         pathPrefix: 'GET /r/https://api.example.com/v1/foo',
         namedRoute: Object.keys(config.routes).length
@@ -149,16 +127,10 @@ async function handleControl(url, config, requestId, context) {
         query: 'GET /?url=https%3A%2F%2Fapi.example.com%2Fv1%2Ffoo',
         absoluteForm: 'GET http://api.example.com/v1/foo (proxy-style clients)',
       },
-      auth: config.bridgeKey
-        ? {
-            required: true,
-            methods: ['Authorization: Bearer <key>', 'X-Bridge-Key: <key>', '?key=<key>'],
-          }
-        : { required: false },
       routes: config.routes,
     },
     { headers: { 'cache-control': 'no-store' } },
-  ), requestId);
+  );
 }
 
 /**
@@ -175,7 +147,6 @@ export function createApp(options = {}) {
   const config = options.config ?? loadConfig(options.env ?? environment, { onWarn });
   const log = createLogger(config);
 
-  const auth = createAuth(config);
   const guard = createGuard(config);
   const resolveTarget = createResolver(config);
   const forward = createForwarder(config, { guard, log });
@@ -184,10 +155,6 @@ export function createApp(options = {}) {
   // status page says "since start" rather than implying a lifetime total.
   const stats = options.stats ?? createStats();
   const getEgressIp = createEgressIp({ url: config.egressIpUrl });
-
-  if (!auth.enabled) {
-    log.warn('running in OPEN mode — anyone with the URL can forward through this instance');
-  }
 
   return async function handle(request, context = {}) {
     const requestId = context.requestId || crypto.randomUUID().slice(0, 12);
@@ -224,14 +191,12 @@ export function createApp(options = {}) {
       // The status page is GET-only; a stray POST to / should not look like a
       // successful page fetch, and every other control path is JSON.
       if (isControlRequest(url) && (url.pathname !== '/' || request.method === 'GET')) {
-        return handleControl(url, config, requestId, {
+        return handleControl(url, config, {
           stats,
           getEgressIp,
           clientIp: context.clientIp || '',
         });
       }
-
-      auth.assert(request, url);
 
       const { url: target, matchedBy, route } = resolveTarget(url, {
         absoluteTarget: context.absoluteTarget ?? null,
@@ -250,11 +215,6 @@ export function createApp(options = {}) {
       guard.assertLiteral(target.toString());
       await guard.assertResolved(target.toString());
 
-      // The caller's Authorization header is the bridge key when auth is on;
-      // when auth is off it is the caller's own upstream credential and must
-      // be passed through untouched.
-      const stripAuthorization = auth.enabled && Boolean(request.headers.get('authorization'));
-
       const clientIp =
         context.clientIp ||
         (options.getClientIp ? await options.getClientIp(request) : '') ||
@@ -267,14 +227,11 @@ export function createApp(options = {}) {
         route,
         clientIp,
         proto: url.protocol.replace(':', ''),
-        stripAuthorization,
       });
 
       stats.recordRequest();
 
       const headers = new Headers(result.headers);
-      headers.set('x-bridge-id', requestId);
-      if (matchedBy) headers.set('x-bridge-match', matchedBy);
 
       log.info('forwarded', {
         method: request.method,
@@ -306,7 +263,7 @@ export function createApp(options = {}) {
           requestId,
         });
       }
-      return errorResponse(err, { corsOrigin: cors, requestId });
+      return errorResponse(err, { corsOrigin: cors });
     }
   };
 }

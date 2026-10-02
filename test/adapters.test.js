@@ -11,7 +11,6 @@ import http from 'node:http';
 // Set the environment before the modules read it at import time.
 process.env.BLOCK_PRIVATE = 'false';
 process.env.LOG_LEVEL = 'error';
-process.env.BRIDGE_KEY = 'testkey';
 
 const { createHandler, handler } = await import('../app/adapters.js');
 const netlifyFn = (await import('../netlify/bridge.js')).default;
@@ -66,8 +65,8 @@ test('Netlify entrypoint is a Web-API function and receives (request, context)',
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.status, 'ready');
-  assert.equal(body.auth, 'required');
-  assert.equal(response.headers.get('x-bridge-id'), 'ctx-1');
+  assert.equal(body.auth, undefined, 'no auth field — the bridge is open');
+  assert.equal(response.headers.get('x-bridge-id'), null, 'no identifying id header');
 });
 
 test('Netlify entrypoint forwards a real request', async () => {

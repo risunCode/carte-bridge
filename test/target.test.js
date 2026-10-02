@@ -65,18 +65,20 @@ test('query-param form', () => {
   assert.equal(matchedBy, 'query');
 });
 
-test('query form forwards extra params but drops the bridge key', () => {
+test('query form forwards extra params alongside the target', () => {
   const target = 'https://api.example.com/v1/foo';
-  const path = `/?url=${encodeURIComponent(target)}&key=secret&model=x`;
+  const path = `/?url=${encodeURIComponent(target)}&model=x`;
   const { url } = resolver(req(path), path);
   assert.equal(url.searchParams.get('model'), 'x');
-  assert.equal(url.searchParams.get('key'), null, 'bridge key must not be forwarded upstream');
+  assert.equal(url.searchParams.get('url'), null, 'the url param itself is not forwarded');
 });
 
-test('the auth key is stripped in path-prefix form too', () => {
+test('a `key` query param is ordinary payload now that auth is gone', () => {
+  // The bridge is open, so `key` is no longer its secret and must reach the
+  // upstream like any other caller parameter.
   const path = '/r/https://api.example.com/v1/foo?key=secret&a=1';
   const { url } = resolver(req(path), path);
-  assert.equal(url.searchParams.get('key'), null);
+  assert.equal(url.searchParams.get('key'), 'secret');
   assert.equal(url.searchParams.get('a'), '1');
 });
 

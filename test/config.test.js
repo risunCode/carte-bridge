@@ -4,7 +4,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../app/core.js';
-import { createAuth, ctEqual } from '../app/policy.js';
 
 const noop = () => {};
 
@@ -12,7 +11,6 @@ test('empty environment yields working defaults', () => {
   const c = loadConfig({}, { onWarn: noop });
   assert.equal(c.port, 8080);
   assert.equal(c.host, '0.0.0.0');
-  assert.equal(c.bridgeKey, '');
   assert.equal(c.blockPrivate, true, 'SSRF guard is on by default');
   assert.equal(c.requestTimeoutMs, 30000);
   assert.equal(c.maxBufferBytes, 1048576);
@@ -96,55 +94,4 @@ test('config is frozen', () => {
   assert.throws(() => {
     c.port = 1;
   }, TypeError);
-});
-
-// --- auth ------------------------------------------------------------------
-
-test('auth is disabled when no key is configured', () => {
-  const auth = createAuth(loadConfig({}, { onWarn: noop }));
-  assert.equal(auth.enabled, false);
-  assert.doesNotThrow(() => auth.assert(new Request('http://x/'), new URL('http://x/')));
-});
-
-test('auth accepts bearer, header and query forms', () => {
-  const auth = createAuth(loadConfig({ BRIDGE_KEY: 'sekret' }, { onWarn: noop }));
-  const url = new URL('http://bridge.example.com/r/https://api.example.com/');
-
-  const cases = [
-    new Request('http://bridge.example.com/', { headers: { authorization: 'Bearer sekret' } }),
-    new Request('http://bridge.example.com/', { headers: { 'x-bridge-key': 'sekret' } }),
-  ];
-  for (const req of cases) assert.doesNotThrow(() => auth.assert(req, url));
-
-  const qs = new URL('http://bridge.example.com/?key=sekret');
-  assert.doesNotThrow(() => auth.assert(new Request(qs.toString()), qs));
-});
-
-test('auth rejects a wrong or missing key with 401', () => {
-  const auth = createAuth(loadConfig({ BRIDGE_KEY: 'sekret' }, { onWarn: noop }));
-  const url = new URL('http://bridge.example.com/');
-
-  for (const req of [
-    new Request('http://bridge.example.com/'),
-    new Request('http://bridge.example.com/', { headers: { authorization: 'Bearer wrong' } }),
-    new Request('http://bridge.example.com/', { headers: { authorization: 'sekret' } }), // no Bearer prefix
-    new Request('http://bridge.example.com/', { headers: { 'x-bridge-key': 'sekret ' + 'x' } }),
-  ]) {
-    try {
-      auth.assert(req, url);
-      assert.fail('should have thrown');
-    } catch (err) {
-      assert.equal(err.status, 401);
-      assert.equal(err.code, 'unauthorized');
-    }
-  }
-});
-
-test('constant-time comparison is correct at differing lengths', () => {
-  assert.equal(ctEqual('abc', 'abc'), true);
-  assert.equal(ctEqual('abc', 'abd'), false);
-  assert.equal(ctEqual('abc', 'abcd'), false);
-  assert.equal(ctEqual('', ''), true);
-  assert.equal(ctEqual('', 'a'), false);
-  assert.equal(ctEqual('a'.repeat(64), 'a'.repeat(64)), true);
 });

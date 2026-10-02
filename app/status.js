@@ -11,7 +11,7 @@ export function renderStatus({ config, stats, clientIp, egressIp, egressError })
   const snap = stats.snapshot();
   const lines = [];
 
-  lines.push('carte-bridge');
+  lines.push('status');
   lines.push('='.repeat(12));
   lines.push('');
   lines.push('currentIP:');
@@ -29,7 +29,6 @@ export function renderStatus({ config, stats, clientIp, egressIp, egressError })
   lines.push('');
   lines.push(`  requests : ${snap.totalRequests}`);
   lines.push(`  uptime   : ${formatUptime(snap.uptimeSeconds)}`);
-  lines.push(`  auth     : ${config.bridgeKey ? 'required' : 'open'}`);
   lines.push(`  ssrfGuard: ${config.blockPrivate ? 'enabled' : 'disabled'}`);
   lines.push(`  routes   : ${Object.keys(config.routes).join(', ') || 'none'}`);
   lines.push('');

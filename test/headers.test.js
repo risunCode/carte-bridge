@@ -14,7 +14,7 @@ function inbound(pairs) {
   return h;
 }
 
-const defaults = { host: 'api.example.com', clientIp: '203.0.113.9', stripAuthorization: false, proto: 'https' };
+const defaults = { host: 'api.example.com', clientIp: '203.0.113.9', proto: 'https' };
 
 test('hop-by-hop headers are not forwarded', () => {
   const out = buildUpstreamHeaders(
@@ -76,36 +76,30 @@ test('host is rewritten to the upstream host', () => {
 test('bridge-internal headers never reach upstream', () => {
   const out = buildUpstreamHeaders(
     inbound([
-      ['x-bridge-key', 'secret'],
       ['x-bridge-peer', '127.0.0.1'],
       ['x-bridge-hop', '1'],
     ]),
     defaults,
   );
-  assert.equal(out.get('x-bridge-key'), null);
   assert.equal(out.get('x-bridge-peer'), null);
   assert.equal(out.get('x-bridge-hop'), null);
 });
 
-test('authorization is stripped only when it was the bridge key', () => {
-  const withStrip = buildUpstreamHeaders(
-    inbound([['authorization', 'Bearer bridgekey']]),
-    { ...defaults, stripAuthorization: true },
-  );
-  assert.equal(withStrip.get('authorization'), null);
-
-  const withPass = buildUpstreamHeaders(
+test('the upstream credential survives untouched', () => {
+  // Open mode: the caller's Authorization header is always the upstream's own
+  // credential and is passed through verbatim.
+  const out = buildUpstreamHeaders(
     inbound([['authorization', 'Bearer sk-upstream-key']]),
-    { ...defaults, stripAuthorization: false },
+    defaults,
   );
-  assert.equal(withPass.get('authorization'), 'Bearer sk-upstream-key', 'upstream credential must survive');
+  assert.equal(out.get('authorization'), 'Bearer sk-upstream-key');
 });
 
-test('via and x-forwarded-proto are set', () => {
+test('x-forwarded-proto and x-forwarded-host are set, no via header', () => {
   const out = buildUpstreamHeaders(inbound([]), defaults);
   assert.equal(out.get('x-forwarded-proto'), 'https');
   assert.equal(out.get('x-forwarded-host'), 'api.example.com');
-  assert.match(out.get('via'), /carte-bridge/);
+  assert.equal(out.get('via'), null, 'no product-identifying via header on the wire');
 });
 
 test('response content-length and content-encoding are dropped', () => {

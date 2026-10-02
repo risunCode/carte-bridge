@@ -56,7 +56,7 @@ const FORWARDING_HEADERS = new Set([
 ]);
 
 // Bridge-internal, must never reach upstream.
-const INTERNAL_HEADERS = new Set(['x-bridge-key', 'x-bridge-peer', 'x-bridge-hop']);
+const INTERNAL_HEADERS = new Set(['x-bridge-peer', 'x-bridge-hop']);
 
 // Response headers that describe the upstream connection or an encoding the
 // runtime already undid.
@@ -88,11 +88,10 @@ function expandConnectionTokens(headers) {
  * @param {object}  options
  * @param {string}  options.host     Host value to present upstream
  * @param {string}  options.clientIp resolved client address
- * @param {boolean} options.stripAuthorization  drop Authorization (it was the bridge key)
  * @param {string}  options.proto    scheme the client used ("http"/"https")
  * @returns {Headers}
  */
-export function buildUpstreamHeaders(inbound, { host, clientIp, stripAuthorization, proto }) {
+export function buildUpstreamHeaders(inbound, { host, clientIp, proto }) {
   const extraHopByHop = expandConnectionTokens(inbound);
   const out = new Headers();
 
@@ -102,7 +101,6 @@ export function buildUpstreamHeaders(inbound, { host, clientIp, stripAuthorizati
     if (extraHopByHop.has(key)) continue;
     if (FORWARDING_HEADERS.has(key)) continue;
     if (INTERNAL_HEADERS.has(key)) continue;
-    if (stripAuthorization && key === 'authorization') continue;
     if (key === 'host') continue;
     out.append(name, value);
   }
@@ -117,8 +115,6 @@ export function buildUpstreamHeaders(inbound, { host, clientIp, stripAuthorizati
   }
   out.set('x-forwarded-proto', proto);
   out.set('x-forwarded-host', host);
-  // Marks that the request traversed this bridge, without naming which one.
-  out.set('via', '1.1 carte-bridge');
 
   return out;
 }
@@ -386,7 +382,7 @@ async function followRedirects(initialUrl, init, { guard, maxRedirects, log, met
 }
 
 export function createForwarder(config, { guard, log }) {
-  return async function forward({ request, url, route, clientIp, proto, stripAuthorization }) {
+  return async function forward({ request, url, route, clientIp, proto }) {
     const method = request.method.toUpperCase();
     const isBodyless = BODYLESS_METHODS.has(method) || method === 'OPTIONS';
 
@@ -416,7 +412,6 @@ export function createForwarder(config, { guard, log }) {
     const headers = buildUpstreamHeaders(request.headers, {
       host: url.host,
       clientIp,
-      stripAuthorization,
       proto,
     });
 

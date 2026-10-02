@@ -152,7 +152,7 @@ test('the status page speed line adapts its binary unit', async () => {
   const { createStats } = await import('../app/stats.js');
 
   const clock = { now: () => 1_700_000_000_000 };
-  const config = { bridgeKey: '', blockPrivate: true, routes: {} };
+  const config = { blockPrivate: true, routes: {} };
 
   // A slow rate must not render as "0.00 MiB/s".
   const slow = createStats({ now: clock.now });

@@ -21,16 +21,6 @@ import { badRequest, notFound } from './core.js';
 // "no target given".
 const SCHEME_FORM = /^[a-z][a-z0-9+.-]*:\/\//i;
 
-// The auth key may legitimately travel in the query string (?key=...), but it
-// must never be forwarded upstream — it is the bridge's secret, not the
-// upstream's. Strip it from whatever query we end up passing along.
-function stripKeyParam(searchParams) {
-  if (!searchParams.has('key')) return searchParams;
-  const copy = new URLSearchParams(searchParams);
-  copy.delete('key');
-  return copy;
-}
-
 function buildUrl(raw) {
   let url;
   try {
@@ -59,7 +49,6 @@ export function createResolver(config) {
     // as absolute-form and point the bridge at itself.
     if (absoluteTarget) {
       const url = buildUrl(absoluteTarget);
-      url.search = stripKeyParam(url.searchParams).toString();
       return { url, matchedBy: 'absolute' };
     }
 
@@ -79,7 +68,7 @@ export function createResolver(config) {
       if (SCHEME_FORM.test(remainder)) {
         const url = buildUrl(remainder);
         if (searchParams.toString()) {
-          for (const [k, v] of stripKeyParam(searchParams)) url.searchParams.append(k, v);
+          for (const [k, v] of searchParams) url.searchParams.append(k, v);
         }
         return { url, matchedBy: 'path' };
       }
@@ -94,7 +83,7 @@ export function createResolver(config) {
         if (SCHEME_FORM.test(decoded)) {
           const url = buildUrl(decoded);
           if (searchParams.toString()) {
-            for (const [k, v] of stripKeyParam(searchParams)) url.searchParams.append(k, v);
+            for (const [k, v] of searchParams) url.searchParams.append(k, v);
           }
           return { url, matchedBy: 'path-encoded' };
         }
@@ -110,7 +99,7 @@ export function createResolver(config) {
         const url = new URL(rest || '/', base);
         // A route target is an origin, so anything after it is caller-chosen
         // path — carry it over verbatim along with the query.
-        for (const [k, v] of stripKeyParam(searchParams)) url.searchParams.append(k, v);
+        for (const [k, v] of searchParams) url.searchParams.append(k, v);
         return { url, matchedBy: 'route', route: name };
       }
 
@@ -128,8 +117,8 @@ export function createResolver(config) {
     if (fromQuery) {
       const url = buildUrl(fromQuery);
       // The rest of the query is caller payload and belongs upstream; only the
-      // auth key is dropped.
-      for (const [k, v] of stripKeyParam(searchParams)) {
+      // `url` param itself is skipped.
+      for (const [k, v] of searchParams) {
         if (k === 'url') continue;
         url.searchParams.append(k, v);
       }

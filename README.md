@@ -17,7 +17,7 @@ and gets out of the way.
 
 ```bash
 node server.js
-# [bridge] info  listening on 0.0.0.0:8080 {"auth":"open","ssrfGuard":"enabled"}
+# [bridge] info  listening on 0.0.0.0:8080 {"transport":"connect+http","ssrfGuard":"enabled"}
 ```
 
 ```bash
@@ -79,7 +79,7 @@ Bandwidth served: 2.41 GiB
 |---|---|
 | `/` | Status page: IPs, current speed, bandwidth served |
 | `/healthz` | Liveness. Plain `ok` |
-| `/readyz` | What this instance will do: auth mode, SSRF state, routes |
+| `/readyz` | What this instance will do: SSRF state, routes |
 | `/stats` | The same counters as JSON |
 | `/__bridge` | Usage and configured routes as JSON |
 
@@ -98,9 +98,10 @@ What the numbers mean, precisely:
 
 ## Security
 
-**Open by default.** No key, no allowlist. Fine locally and on a private
-network; on the public internet it means anyone who finds the URL can forward
-traffic through it — your bandwidth, your domain's reputation.
+**Open by default — and always.** There is no key. Fine locally, on a private
+network, and behind an allowlist; on the public internet it means anyone who
+finds the URL can forward traffic through it — your bandwidth, your domain's
+reputation.
 
 Two protections are on regardless:
 
@@ -111,26 +112,33 @@ Two protections are on regardless:
 - **No spoofable client IP.** Forwarding headers from a caller are discarded and
   replaced with the real peer address.
 
-### Locking it down
+Because there is no key, an upstream's own `Authorization` header is always
+passed through untouched — there is nothing for the bridge to consume.
+
+### Restricting where it may reach
 
 ```bash
-BRIDGE_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-```
-
-Callers then present the key as `Authorization: Bearer <key>`,
-`X-Bridge-Key: <key>`, or `?key=<key>` (the query form is for `<img>`/`<script>`,
-which cannot set headers). Combine with an allowlist for a tighter setup:
-
-```bash
-BRIDGE_KEY=... ALLOWED_HOSTS='api.anthropic.com,*.example.com'
+ALLOWED_HOSTS='api.anthropic.com,*.example.com' node server.js
 ```
 
 `*.example.com` matches subdomains but not the bare domain. Empty
 `ALLOWED_HOSTS` means any public host.
 
-> With `BRIDGE_KEY` set, an incoming `Authorization` header is treated as the
-> bridge key and is not forwarded. If your upstream needs its own, send the bridge
-> key via `X-Bridge-Key` or `?key=` so the upstream credential passes through.
+---
+
+## Transports
+
+The bridge speaks two transports and picks the best one its runtime can offer.
+
+| Transport | Where | Shape |
+|---|---|---|
+| **CONNECT tunnel** | Docker, Railway, VPS, local (`server.js`) | `CONNECT host:port` → a raw TCP tunnel. No HTTP relay in the path. |
+| **HTTP relay** | Vercel, Netlify, Deno Deploy | `GET /r/<url>` or `GET /?url=<url>` |
+
+The CONNECT path is a real forward proxy: the client asks for `host:port`, the
+bridge dials it, and bytes are piped both ways. The serverless entrypoints have
+no raw socket, so there the same codebase serves the HTTP relay instead. A
+client that can try CONNECT first and fall back to the relay works everywhere.
 
 ---
 
@@ -142,7 +150,6 @@ Every variable is optional.
 |---|---|---|
 | `PORT` | `8080` | Listen port (Docker / Railway / local) |
 | `HOST` | `0.0.0.0` | Bind address |
-| `BRIDGE_KEY` | *empty* | Empty = open. Set = required on every request |
 | `ALLOWED_HOSTS` | *empty* | Comma-separated allowlist. Empty = any public host |
 | `BLOCK_PRIVATE` | `true` | SSRF guard |
 | `ROUTES` | *empty* | JSON map of prefix → origin |
@@ -182,9 +189,8 @@ Railway builds with the `Dockerfile` at the root — it uses one automatically
 when it finds it, so no `railway.json` is needed (and config-as-code is
 deprecated anyway). Railway injects `PORT`, which the bridge reads.
 
-Plain HTTP is enough. Unlike a CONNECT tunnel, this bridge does **not** need a TCP
-Proxy. Set `BRIDGE_KEY` in the service's **Variables** tab only if you want to
-close it.
+Railway runs `server.js`, so this deployment serves the **CONNECT tunnel** as
+well as the HTTP relay.
 
 ### Vercel
 
@@ -206,7 +212,7 @@ that layer would silently degrade to literal-only checks.
 
 ```bash
 docker build -t carte-bridge .
-docker run -p 8080:8080 -e BRIDGE_KEY=yourkey carte-bridge
+docker run -p 8080:8080 carte-bridge
 ```
 
 Or with Compose, reading the same variables from `.env`:
@@ -257,9 +263,10 @@ outlive that ceiling. Check the current limits for your plan.
 
 ```
 server.js              the only file at the root: starts the listener (Node)
+                       and serves the CONNECT tunnel
 app/
-  bridge.js             typed errors, leveled logger, env -> frozen config
-  policy.js            the two gates: who may call (auth), where it may reach (SSRF)
+  core.js              typed errors, leveled logger, env -> frozen config
+  policy.js            the gate: where a request may reach (SSRF)
   forward.js           header sanitization + fetch, redirects, streaming, failover
   target.js            the four accepted URL shapes
   stats.js             byte counters, speed window, egress IP lookup
@@ -305,10 +312,11 @@ inject their own environment object instead.
 npm test
 ```
 
-108 tests, no network required: config parsing, constant-time auth, SSRF
+104 tests, no network required: config parsing, SSRF
 (including IPv6 textual equivalence and DNS-resolved private targets), header
 sanitization, the four URL shapes, adapter seams, the byte counters and speed
-window, runtime portability (the core runs with no Node `process` global), and
+window, runtime portability (the core runs with no Node `process` global), the
+CONNECT tunnel (bytes round-trip, blocked targets refused), and
 end-to-end bridge behaviour against a real upstream — gzip integrity,
 incremental SSE delivery, stream idle cutoff, redirect bounds, failover, and
 large-body pass-through.

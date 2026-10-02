@@ -72,17 +72,17 @@ test('an entrypoint can inject its own environment object', async () => {
   const { createApp } = await import('../app/handler.js');
 
   const app = createApp({
-    env: { BRIDGE_KEY: 'injected', BLOCK_PRIVATE: 'false', LOG_LEVEL: 'error' },
+    env: { BLOCK_PRIVATE: 'false', LOG_LEVEL: 'error' },
   });
 
-  const denied = await app(new Request('http://bridge.test/r/https://example.test/'));
-  assert.equal(denied.status, 401, 'the injected BRIDGE_KEY must be honoured');
+  const open = await app(new Request('http://bridge.test/r/https://example.test/'));
+  assert.notEqual(open.status, 401, 'the bridge is open — no auth');
 
   const allowed = await app(
     new Request('http://bridge.test/readyz', { headers: { authorization: 'Bearer injected' } }),
   );
   const body = await allowed.json();
-  assert.equal(body.auth, 'required');
+  assert.equal(body.auth, undefined);
   assert.equal(body.ssrfGuard, 'disabled', 'the injected BLOCK_PRIVATE must be honoured');
 });
 

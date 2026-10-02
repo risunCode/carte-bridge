@@ -134,8 +134,8 @@ test('forwards a GET and returns the upstream body', async () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.path, '/echo');
-    assert.equal(res.headers.get('x-bridge-match'), 'path');
-    assert.ok(res.headers.get('x-bridge-id'));
+    assert.equal(res.headers.get('x-bridge-match'), null, 'no identifying match header');
+    assert.equal(res.headers.get('x-bridge-id'), null, 'no identifying id header');
   } finally {
     await bridge.close();
     await upstream.close();
@@ -174,7 +174,7 @@ test('query parameters reach upstream', async () => {
   }
 });
 
-test('upstream Authorization survives when the bridge has no key of its own', async () => {
+test('upstream Authorization survives, always', async () => {
   const upstream = await startUpstream();
   const bridge = await startBridge();
   try {
@@ -183,36 +183,6 @@ test('upstream Authorization survives when the bridge has no key of its own', as
     });
     const body = await res.json();
     assert.equal(body.headers.authorization, 'Bearer sk-upstream-credential');
-  } finally {
-    await bridge.close();
-    await upstream.close();
-  }
-});
-
-test('the bridge key is consumed, not forwarded upstream', async () => {
-  const upstream = await startUpstream();
-  const bridge = await startBridge({ BRIDGE_KEY: 'bridgekey' });
-  try {
-    const res = await fetch(`${bridge.base}/r/${upstream.base}/echo`, {
-      headers: { authorization: 'Bearer bridgekey' },
-    });
-    const body = await res.json();
-    assert.equal(body.headers.authorization, undefined, 'bridge key must not leak upstream');
-  } finally {
-    await bridge.close();
-    await upstream.close();
-  }
-});
-
-test('a missing bridge key is rejected with 401 before any upstream call', async () => {
-  const upstream = await startUpstream();
-  const bridge = await startBridge({ BRIDGE_KEY: 'bridgekey' });
-  try {
-    const res = await fetch(`${bridge.base}/r/${upstream.base}/echo`);
-    assert.equal(res.status, 401);
-    const body = await res.json();
-    assert.equal(body.error.code, 'unauthorized');
-    assert.equal(res.headers.get('www-authenticate'), 'Bearer realm="carte-bridge"');
   } finally {
     await bridge.close();
     await upstream.close();
@@ -459,7 +429,7 @@ test('named route maps a short path to the configured origin', async () => {
     const body = await res.json();
     assert.equal(body.path, '/echo');
     assert.equal(body.query.via, 'route');
-    assert.equal(res.headers.get('x-bridge-match'), 'route');
+    assert.equal(res.headers.get('x-bridge-match'), null);
   } finally {
     await bridge.close();
     await upstream.close();
@@ -511,7 +481,8 @@ test('control endpoints answer without a target', async () => {
     const ready = await fetch(`${bridge.base}/readyz`);
     const readyBody = await ready.json();
     assert.equal(readyBody.status, 'ready');
-    assert.equal(readyBody.auth, 'open');
+    assert.equal(readyBody.bridge, undefined, 'no product name in the ready payload');
+    assert.equal(readyBody.auth, undefined, 'no auth field — the bridge is open');
     assert.equal(readyBody.ssrfGuard, 'disabled');
     assert.deepEqual(readyBody.routes, ['anthropic']);
 
@@ -531,7 +502,7 @@ test('GET / serves a plain-text status page', async () => {
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type'), /text\/plain/);
     const text = await res.text();
-    assert.match(text, /carte-bridge/);
+    assert.doesNotMatch(text, /carte-bridge/, 'product name must not appear on the wire');
     assert.match(text, /currentIP:/);
     assert.match(text, /CurrentSpeed:/);
     assert.match(text, /Bandwidth served:/);
@@ -572,7 +543,7 @@ test('/stats returns machine-readable counters', async () => {
     const res = await fetch(`${bridge.base}/stats`);
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.bridge, 'carte-bridge');
+    assert.equal(body.bridge, undefined, 'no product name in the stats payload');
     assert.ok(body.totalBytes > 0, 'bytes should have been counted');
     assert.ok(body.totalRequests >= 1);
     assert.ok(typeof body.speedHuman === 'string');
@@ -626,3 +597,134 @@ test('the bridge refuses to forward to itself', async () => {
     await bridge.close();
   }
 });
+
+// --- CONNECT tunnel (the raw-socket runtime only) ---------------------------
+//
+// `server.js` is the one entrypoint that can hold a TCP socket, so it is the
+// only one that serves CONNECT. This reproduces that server's shape: an
+// `http.createServer` with a `connect` handler that dials the requested
+// host:port and pipes bytes. The serverless entrypoints have no such path.
+
+import net from 'node:net';
+import { createGuard } from '../app/policy.js';
+
+function startConnectBridge(env = {}) {
+  const config = loadConfig({ BLOCK_PRIVATE: 'false', LOG_LEVEL: 'error', ...env }, { onWarn: noop });
+  const guard = createGuard(config);
+  const server = http.createServer((_req, res) => {
+    res.writeHead(404);
+    res.end();
+  });
+  server.on('connect', async (req, clientSocket, head) => {
+    const target = req.url || '';
+    const sep = target.lastIndexOf(':');
+    const host = sep === -1 ? target : target.slice(0, sep);
+    const port = sep === -1 ? 443 : Number.parseInt(target.slice(sep + 1), 10);
+    try {
+      guard.assertLiteral(`https://${host}`);
+      await guard.assertResolved(`https://${host}`);
+    } catch {
+      if (clientSocket.writable) clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+      clientSocket.destroy();
+      return;
+    }
+    const upstream = net.connect(port, host);
+    upstream.on('connect', () => {
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head && head.length) upstream.write(head);
+      upstream.pipe(clientSocket);
+      clientSocket.pipe(upstream);
+    });
+    upstream.on('error', () => {
+      if (clientSocket.writable) clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      clientSocket.destroy();
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () =>
+      resolve({
+        server,
+        port: server.address().port,
+        close: () => new Promise((r) => server.close(r)),
+      }),
+    );
+  });
+}
+
+test('CONNECT establishes a tunnel and carries bytes both ways', async () => {
+  // A TCP echo server stands in for the upstream: whatever the client writes
+  // through the tunnel must come back, proving the bytes were piped verbatim.
+  const echo = net.createServer((socket) => socket.pipe(socket));
+  await new Promise((r) => echo.listen(0, '127.0.0.1', r));
+  const echoPort = echo.address().port;
+
+  const bridge = await startConnectBridge();
+  try {
+    const reply = await new Promise((resolve, reject) => {
+      const socket = net.connect(bridge.port, '127.0.0.1', () => {
+        socket.write(`CONNECT 127.0.0.1:${echoPort} HTTP/1.1\r\nHost: 127.0.0.1:${echoPort}\r\n\r\n`);
+      });
+      let buffer = '';
+      let established = false;
+      socket.on('data', (chunk) => {
+        buffer += chunk.toString('utf8');
+        if (!established) {
+          const headerEnd = buffer.indexOf('\r\n\r\n');
+          if (headerEnd === -1) return;
+          const statusLine = buffer.slice(0, buffer.indexOf('\r\n'));
+          if (!/^HTTP\/1\.1 200/.test(statusLine)) {
+            socket.destroy();
+            reject(new Error(`expected 200, got: ${statusLine}`));
+            return;
+          }
+          established = true;
+          buffer = buffer.slice(headerEnd + 4);
+          // Now send a payload through the tunnel.
+          socket.write('tunnel-payload');
+          return;
+        }
+        if (buffer.includes('tunnel-payload')) {
+          socket.destroy();
+          resolve(buffer);
+        }
+      });
+      socket.on('error', reject);
+      socket.setTimeout(5000, () => {
+        socket.destroy();
+        reject(new Error('tunnel timed out'));
+      });
+    });
+    assert.equal(reply, 'tunnel-payload', 'bytes must round-trip through the tunnel');
+  } finally {
+    await bridge.close();
+    await new Promise((r) => echo.close(r));
+  }
+});
+
+test('CONNECT refuses a blocked target', async () => {
+  const bridge = await startConnectBridge({ BLOCK_PRIVATE: 'true' });
+  try {
+    const statusLine = await new Promise((resolve, reject) => {
+      const socket = net.connect(bridge.port, '127.0.0.1', () => {
+        socket.write('CONNECT 127.0.0.1:443 HTTP/1.1\r\nHost: 127.0.0.1:443\r\n\r\n');
+      });
+      let buffer = '';
+      socket.on('data', (chunk) => {
+        buffer += chunk.toString('utf8');
+        if (buffer.includes('\r\n')) {
+          socket.destroy();
+          resolve(buffer.split('\r\n')[0]);
+        }
+      });
+      socket.on('error', reject);
+      socket.setTimeout(5000, () => {
+        socket.destroy();
+        reject(new Error('timed out'));
+      });
+    });
+    assert.match(statusLine, /^HTTP\/1\.1 403/, 'loopback must be refused by the SSRF guard');
+  } finally {
+    await bridge.close();
+  }
+});
+

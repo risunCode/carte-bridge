@@ -1,69 +1,9 @@
-// carte-bridge — policy: who may call this bridge, and where it may reach.
+// Policy: where may a request reach?
 //
-// Authentication and the SSRF guard are merged because they answer one
-// question between them: is this request allowed to proceed at all?
-
-// ---------------------------------------------------------------------------
-// Authentication
-// ---------------------------------------------------------------------------
-
-// Auth: an optional shared key.
-//
-// Open by default — if BRIDGE_KEY is empty every request passes. When it is set,
-// the key may arrive as a bearer token, an X-Bridge-Key header, or a `key` query
-// parameter. The query form exists because <img>, <video> and <script> tags
-// cannot set headers.
-//
-// Comparison is constant-time. Both sides are compared byte-wise over the
-// longer of the two lengths so a wrong-length key does not return measurably
-// faster than a wrong-value key of the right length.
-
-import { unauthorized } from './core.js';
-
-const encoder = new TextEncoder();
-
-function ctEqual(a, b) {
-  const ab = encoder.encode(a);
-  const bb = encoder.encode(b);
-  // Fold the length difference into the accumulator instead of branching on it.
-  let diff = ab.length ^ bb.length;
-  const len = Math.max(ab.length, bb.length);
-  if (len === 0) return diff === 0;
-  for (let i = 0; i < len; i++) {
-    diff |= ab[i % ab.length] ^ bb[i % bb.length];
-  }
-  return diff === 0;
-}
-
-function extractKey(request, url) {
-  const auth = request.headers.get('authorization');
-  if (auth) {
-    const m = /^Bearer\s+(.+)$/i.exec(auth.trim());
-    if (m) return m[1].trim();
-  }
-  const header = request.headers.get('x-bridge-key');
-  if (header) return header.trim();
-  const query = url.searchParams.get('key');
-  if (query) return query.trim();
-  return '';
-}
-
-export function createAuth(config) {
-  const expected = config.bridgeKey;
-  const enabled = Boolean(expected);
-
-  return {
-    enabled,
-    // Throws BridgeError(401) when the key is missing or wrong.
-    assert(request, url) {
-      if (!enabled) return;
-      const provided = extractKey(request, url);
-      if (!provided || !ctEqual(provided, expected)) throw unauthorized();
-    },
-  };
-}
-
-export { ctEqual };
+// There is no authentication — the bridge is open for all callers, and an
+// upstream's own Authorization header is passed through untouched. The only
+// gate left is the SSRF guard, which answers one question: is this request
+// allowed to reach its target at all?
 
 // ---------------------------------------------------------------------------
 // SSRF guard
