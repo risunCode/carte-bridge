@@ -61,6 +61,9 @@ const INTERNAL_HEADERS = new Set([
   'x-bridge-hop',
   'x-bridge-target',
   'x-bridge-path',
+  'x-bridge-auth',
+  'x-relay-target',
+  'x-relay-path',
 ]);
 
 // Response headers that describe the upstream connection or an encoding the

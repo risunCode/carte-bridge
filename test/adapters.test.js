@@ -84,6 +84,25 @@ test('Netlify entrypoint forwards a real request', async () => {
   }
 });
 
+test('Netlify entrypoint accepts the HTTPS relay header contract', async () => {
+  const upstream = await startUpstream();
+  try {
+    const request = new Request('http://bridge.test/', {
+      headers: {
+        'x-relay-target': upstream.base,
+        'x-relay-path': '/echo?via=relay',
+        authorization: 'Bearer testkey',
+      },
+    });
+    const response = await netlifyFn(request, { ip: '203.0.113.5' });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.url, '/echo?via=relay');
+  } finally {
+    await upstream.close();
+  }
+});
+
 test('the shared handler factory caches nothing across different configs', async () => {
   // createHandler must build a fresh app per call; the module-level `handler`
   // is the cached one. Calling both must not interfere.
