@@ -100,10 +100,10 @@ What the numbers mean, precisely:
 
 ## Security
 
-**Open by default — and always.** There is no key. Fine locally, on a private
-network, and behind an allowlist; on the public internet it means anyone who
-finds the URL can forward traffic through it — your bandwidth, your domain's
-reputation.
+**Open by default.** There is no required key unless `BRIDGE_AUTH_MODE=basic`
+is configured. Open mode is fine locally, on a private network, or behind an
+allowlist; on the public internet it means anyone who finds the URL can
+forward traffic through it — your bandwidth, your domain's reputation.
 
 Two protections are on regardless:
 
@@ -114,8 +114,25 @@ Two protections are on regardless:
 - **No spoofable client IP.** Forwarding headers from a caller are discarded and
   replaced with the real peer address.
 
-Because there is no key, an upstream's own `Authorization` header is always
-passed through untouched — there is nothing for the bridge to consume.
+When bridge authentication is disabled, an upstream's own `Authorization`
+header is passed through untouched. Basic bridge authentication uses the
+separate `x-bridge-auth` header for exactly this reason.
+
+### Optional bridge authentication
+
+Authentication is open by default. To protect relay requests, configure:
+
+```bash
+BRIDGE_AUTH_MODE=basic
+BRIDGE_USERNAME=cartethyia
+BRIDGE_PASSWORD='change-this'
+```
+
+The bridge credentials use the internal `x-bridge-auth` header, not the
+upstream `Authorization` header. This keeps provider credentials intact while
+allowing Cartethyia to authenticate the bridge itself. Health and status
+endpoints remain available for platform probes; forwarding requests require
+the bridge credentials.
 
 ### Restricting where it may reach
 
@@ -183,80 +200,206 @@ Route targets must be bare origins — `https://api.example.com`, not
 
 ## Deploy
 
-### Railway
 
-Click the badge above, or: **New Project → Deploy from GitHub → pick this repo**.
+All providers use the same application and the same environment variables.
+Start with the open mode if the relay is protected by a private network or an
+upstream firewall. Set `BRIDGE_AUTH_MODE=basic` when the public endpoint needs a
+second access gate.
 
-Railway builds with the `Dockerfile` at the root — it uses one automatically
-when it finds it, so no `railway.json` is needed (and config-as-code is
-deprecated anyway). Railway injects `PORT`, which the bridge reads.
+<details>
+<summary><strong>Railway — long-lived Node server with CONNECT support</strong></summary>
 
-Railway runs `server.js`, so this deployment serves the **CONNECT tunnel** as
-well as the HTTP relay.
+1. Click **Deploy on Railway** above, or create a new project from this GitHub
+   repository.
+2. In **Variables**, add the values you need. Railway supplies `PORT`
+   automatically:
 
-### Vercel
+   ```text
+   BLOCK_PRIVATE=true
+   BRIDGE_AUTH_MODE=basic
+   BRIDGE_USERNAME=cartethyia
+   BRIDGE_PASSWORD=replace-me
+   ```
 
-Click the badge above, or `vercel --prod`.
+3. Deploy and open the generated domain.
+4. Verify the instance:
 
-`vercel.json` rewrites every path to `api/index.js` on the Node.js runtime. Set
-variables in **Project → Settings → Environment Variables**.
+   ```bash
+   curl https://YOUR-APP.up.railway.app/healthz
+   curl https://YOUR-APP.up.railway.app/readyz
+   ```
 
-### Netlify
+Railway finds the root `Dockerfile` automatically. This deployment runs
+`server.js`, so it supports both the HTTP relay and the real CONNECT tunnel.
 
-Click the badge above, or `netlify deploy --prod`.
+</details>
 
-`netlify.toml` points the functions directory at `netlify/` and sets the Node
-runtime. It is **not** the Edge runtime on purpose: the SSRF guard needs
-`node:dns` to catch a public hostname that resolves to a private address. On Edge
-that layer would silently degrade to literal-only checks.
+<details>
+<summary><strong>Vercel — serverless HTTP relay</strong></summary>
 
-### Docker
+Using the button above:
+
+1. Import the repository.
+2. In **Project → Settings → Environment Variables**, add
+   `BLOCK_PRIVATE`, `ALLOWED_HOSTS`, and the optional bridge authentication
+   variables.
+3. Redeploy after changing environment variables.
+
+Using the CLI:
+
+```bash
+npx vercel login
+npx vercel link
+npx vercel env add BLOCK_PRIVATE production
+npx vercel env add BRIDGE_AUTH_MODE production
+npx vercel env add BRIDGE_USERNAME production
+npx vercel env add BRIDGE_PASSWORD production
+npx vercel --prod
+```
+
+The repository's `vercel.json` routes every request to `api/index.js` and sets
+the function maximum to 300 seconds, subject to the Vercel account plan.
+Verify with:
+
+```bash
+curl https://YOUR-PROJECT.vercel.app/healthz
+```
+
+Vercel uses the HTTP relay contract. It does not provide a raw CONNECT socket.
+
+</details>
+
+<details>
+<summary><strong>Netlify — serverless function relay</strong></summary>
+
+Using the button above:
+
+1. Import the repository.
+2. In **Site configuration → Environment variables**, add
+   `BLOCK_PRIVATE`, `ALLOWED_HOSTS`, and the optional bridge authentication
+   variables.
+3. Trigger a deploy.
+
+Using the CLI:
+
+```bash
+npm install -g netlify-cli
+netlify login
+netlify init
+netlify env:set BLOCK_PRIVATE true
+netlify env:set BRIDGE_AUTH_MODE basic
+netlify env:set BRIDGE_USERNAME cartethyia
+netlify env:set BRIDGE_PASSWORD replace-me
+netlify deploy --prod
+```
+
+`netlify.toml` points functions at `netlify/bridge.js` and pins Node 22. The
+function is intentionally Node-based rather than Edge-based because the full
+SSRF guard uses `node:dns`. Netlify is limited to short-lived function
+requests, so use Railway, Docker, Deno, or Cloudflare for long SSE streams.
+
+Verify with:
+
+```bash
+curl https://YOUR-SITE.netlify.app/healthz
+```
+
+</details>
+
+<details>
+<summary><strong>Docker — local, VPS, or any container platform</strong></summary>
+
+Build and run directly:
 
 ```bash
 docker build -t carte-bridge .
-docker run -p 8080:8080 carte-bridge
+docker run --rm -p 8080:8080 \
+  -e BLOCK_PRIVATE=true \
+  -e BRIDGE_AUTH_MODE=basic \
+  -e BRIDGE_USERNAME=cartethyia \
+  -e BRIDGE_PASSWORD=replace-me \
+  carte-bridge
 ```
 
-Or with Compose, reading the same variables from `.env`:
+For repeatable configuration, copy the example environment file and use
+Compose:
 
 ```bash
-cp .env.example .env   # then edit
-docker compose up -d
+cp .env.example .env
+# edit .env
+docker compose up -d --build
+curl http://localhost:8080/healthz
 ```
 
-`node:22-alpine`, runs as the unprivileged `node` user, `HEALTHCHECK` on
-`/healthz`. No volumes — the bridge holds no state.
+The image runs as the unprivileged `node` user, exposes port `8080`, and has a
+`HEALTHCHECK` for `/healthz`. Docker/VPS deployments support both HTTP relay and
+CONNECT.
 
-### Deno Deploy
+</details>
+
+<details>
+<summary><strong>Deno Deploy — portable HTTP relay</strong></summary>
+
+Local smoke run:
 
 ```bash
-deno task start                       # local
-deployctl deploy --project=carte-bridge deno/main.js
+deno task start
+curl http://localhost:8000/healthz
 ```
 
-Or connect the repo in the Deno Deploy dashboard and set the entrypoint to
-`deno/main.js`.
-
-Deno is deny-by-default, so the process needs `--allow-net` (upstream fetch and
-the egress IP lookup) and `--allow-env`. `deno.json` already sets both.
-
-**One difference worth knowing:** Deno has no `node:dns`, so the SSRF guard runs
-its literal layer only. `169.254.169.254`, `127.0.0.1` and the private ranges are
-still refused, but a *public hostname that resolves to* a private address is not
-caught. On Deno, set `ALLOWED_HOSTS` if the instance is public.
-
-### Cloudflare Workers
+Deploy with `deployctl`:
 
 ```bash
+deployctl deploy \
+  --project=carte-bridge \
+  --prod \
+  deno/main.js
+```
+
+Or connect the repository in the Deno Deploy dashboard and set the entrypoint
+to `deno/main.js`. Configure environment variables in the project settings:
+`BLOCK_PRIVATE`, `ALLOWED_HOSTS`, `BRIDGE_AUTH_MODE`, `BRIDGE_USERNAME`, and
+`BRIDGE_PASSWORD`.
+
+`deno.json` grants `--allow-net` and `--allow-env`. Deno has no `node:dns`, so
+the SSRF guard can reject literal private addresses but cannot detect every
+public hostname that resolves to a private address. For a public Deno
+deployment, set `ALLOWED_HOSTS` to a narrow allowlist.
+
+</details>
+
+<details>
+<summary><strong>Cloudflare Workers — edge HTTP relay</strong></summary>
+
+Authenticate Wrangler and deploy from the repository root:
+
+```bash
+npx wrangler login
 npx wrangler deploy --config cloudflare/wrangler.toml
 ```
 
-The Worker entrypoint uses the same platform-neutral app and accepts the
-`x-bridge-target` and `x-bridge-path` headers used by Cartethyia's bridge pool.
-Cloudflare has no hard wall-clock limit for an HTTP-triggered Worker while the
-client remains connected, so it is the preferred serverless target for long
-HTTP/SSE streams. Its runtime has no `node:dns`, so literal SSRF checks remain
-active but `ALLOWED_HOSTS` is strongly recommended for public deployments.
+Set runtime variables in the Cloudflare dashboard under **Workers & Pages →
+your Worker → Settings → Variables and Secrets**. Use a secret for the
+password:
+
+```bash
+npx wrangler secret put BRIDGE_PASSWORD --config cloudflare/wrangler.toml
+```
+
+Set `BRIDGE_AUTH_MODE=basic` and `BRIDGE_USERNAME` as encrypted or plain
+variables according to your account policy. Redeploy after changing variables.
+Verify the Worker:
+
+```bash
+curl https://YOUR-WORKER.workers.dev/healthz
+```
+
+Cloudflare Workers use the HTTP relay contract and cannot provide raw CONNECT.
+The runtime has no `node:dns`, so literal SSRF checks remain active; use
+`ALLOWED_HOSTS` for a public Worker. Cloudflare is the preferred serverless
+target for long HTTP/SSE streams while the client remains connected.
+
+</details>
 
 ### What works where
 
@@ -273,6 +416,36 @@ limit still depends on the account plan. Netlify streaming functions have a
 60-second execution limit and a 20 MB response limit. Deno and Cloudflare can
 keep active streams alive longer, but deployments, runtime updates, and
 instance eviction can still close a connection, so clients must reconnect.
+
+
+<details>
+<summary><strong>Use the deployed relay</strong></summary>
+
+For an open relay, send the target origin and path as bridge headers:
+
+```bash
+curl "https://YOUR-RELAY.example/" \
+  -H 'x-bridge-target: https://httpbin.org' \
+  -H 'x-bridge-path: /anything?source=carte'
+```
+
+When `BRIDGE_AUTH_MODE=basic`, add the bridge credential separately. Keep the
+provider's own credential in `Authorization`:
+
+```bash
+curl "https://YOUR-RELAY.example/" \
+  -H 'x-bridge-target: https://api.example.com' \
+  -H 'x-bridge-path: /v1/messages' \
+  -H "x-bridge-auth: Basic $(printf '%s' 'cartethyia:replace-me' | base64)" \
+  -H "Authorization: Bearer PROVIDER_TOKEN"
+```
+
+The bridge auth header is consumed by Carte Relay and never reaches the
+upstream. The provider `Authorization` header does reach the upstream.
+Cartethyia's `bridge://username:password@host` pool endpoint generates this
+header automatically during its relay fallback.
+
+</details>
 
 ---
 
@@ -330,14 +503,14 @@ inject their own environment object instead.
 npm test
 ```
 
-104 tests, no network required: config parsing, SSRF
+108 tests, no network required: config parsing, SSRF
 (including IPv6 textual equivalence and DNS-resolved private targets), header
 sanitization, the four URL shapes, adapter seams, the byte counters and speed
 window, runtime portability (the core runs with no Node `process` global), the
-CONNECT tunnel (bytes round-trip, blocked targets refused), and
-end-to-end bridge behaviour against a real upstream — gzip integrity,
-incremental SSE delivery, stream idle cutoff, redirect bounds, failover, and
-large-body pass-through.
+CONNECT tunnel (bytes round-trip, blocked targets refused), optional bridge
+authentication, and end-to-end bridge behaviour against a real upstream —
+gzip integrity, incremental SSE delivery, stream idle cutoff, redirect bounds,
+failover, and large-body pass-through.
 
 ---
 
