@@ -57,20 +57,24 @@ test('named route with query and no path', () => {
   assert.equal(url.searchParams.get('x'), '1');
 });
 
-test('query-param form', () => {
-  const target = 'https://api.example.com/v1/foo';
-  const path = `/?url=${encodeURIComponent(target)}`;
-  const { url, matchedBy } = resolver(req(path), path);
-  assert.equal(url.toString(), target);
-  assert.equal(matchedBy, 'query');
+
+test('bridge header form builds an origin-form target', () => {
+  const { url, matchedBy } = resolver(req('/'), {
+    bridgeTarget: 'https://api.example.com',
+    bridgePath: '/v1/foo?stream=true',
+  });
+  assert.equal(url.toString(), 'https://api.example.com/v1/foo?stream=true');
+  assert.equal(matchedBy, 'bridge');
 });
 
-test('query form forwards extra params alongside the target', () => {
-  const target = 'https://api.example.com/v1/foo';
-  const path = `/?url=${encodeURIComponent(target)}&model=x`;
-  const { url } = resolver(req(path), path);
-  assert.equal(url.searchParams.get('model'), 'x');
-  assert.equal(url.searchParams.get('url'), null, 'the url param itself is not forwarded');
+test('bridge header form rejects non-origin paths', () => {
+  assert.throws(
+    () => resolver(req('/'), {
+      bridgeTarget: 'https://api.example.com',
+      bridgePath: 'https://evil.example/',
+    }),
+    /origin-form path/,
+  );
 });
 
 test('a `key` query param is ordinary payload now that auth is gone', () => {

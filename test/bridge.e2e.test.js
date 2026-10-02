@@ -300,6 +300,28 @@ test('a stalled stream is cut by the idle timeout', async () => {
   }
 });
 
+test('SSE heartbeat keeps a quiet upstream stream alive', async () => {
+  const upstream = await startUpstream();
+  const bridge = await startBridge({
+    STREAM_IDLE_TIMEOUT_MS: '300',
+    STREAM_HEARTBEAT_MS: '50',
+  });
+  try {
+    const res = await fetch(`${bridge.base}/r/${upstream.base}/stall`);
+    assert.equal(res.status, 200);
+    const reader = res.body.getReader();
+    const first = await reader.read();
+    assert.match(new TextDecoder().decode(first.value), /first/);
+
+    const heartbeat = await reader.read();
+    assert.match(new TextDecoder().decode(heartbeat.value), /bridge-heartbeat/);
+    await reader.cancel();
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
 test('redirects are followed', async () => {
   const upstream = await startUpstream();
   const bridge = await startBridge();
@@ -512,6 +534,28 @@ test('GET / serves a plain-text status page', async () => {
     await bridge.close();
   }
 });
+
+
+test('bridge headers forward the target without a query URL', async () => {
+  const upstream = await startUpstream();
+  const bridge = await startBridge();
+  try {
+    const res = await fetch(`${bridge.base}/`, {
+      headers: {
+        'x-bridge-target': upstream.base,
+        'x-bridge-path': '/echo',
+      },
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /application\/json/);
+    const body = await res.json();
+    assert.equal(body.path, '/echo');
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
 
 test('the status page shows the client IP and reports byte counters', async () => {
   const upstream = await startUpstream();

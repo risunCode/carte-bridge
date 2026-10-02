@@ -1,0 +1,6 @@
+name = "carte-bridge"
+main = "worker.js"
+compatibility_date = "2026-04-23"
+
+[observability]
+enabled = true

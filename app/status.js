@@ -34,9 +34,10 @@ export function renderStatus({ config, stats, clientIp, egressIp, egressError })
   lines.push('');
   lines.push('-'.repeat(12));
   lines.push('Usage');
+  lines.push('  x-bridge-target: https://api.example.com');
+  lines.push('  x-bridge-path  : /v1/foo');
   lines.push('  GET /r/https://api.example.com/v1/foo');
   lines.push('  GET /r/<route>/v1/foo            (when ROUTES is set)');
-  lines.push('  GET /?url=https%3A%2F%2Fapi.example.com%2Fv1%2Ffoo');
   lines.push('  GET http://api.example.com/v1/foo (absolute-form clients)');
   lines.push('');
   lines.push('Endpoints');

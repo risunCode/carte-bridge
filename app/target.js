@@ -2,16 +2,15 @@
 //
 // Four accepted shapes, checked in this order:
 //
-//   1. absolute-form   GET http://api.example.com/v1/foo HTTP/1.1
+//   1. bridge headers   x-bridge-target + x-bridge-path
+//   2. absolute-form   GET http://api.example.com/v1/foo HTTP/1.1
 //                      (classic proxy form; Node's http server surfaces it
 //                       verbatim as req.url)
-//   2. path prefix     /r/https://api.example.com/v1/foo
-//   3. named route     /r/anthropic/v1/messages     (via ROUTES env)
-//   4. query param     /?url=https%3A%2F%2Fapi.example.com%2Fv1%2Ffoo
+//   3. path prefix     /r/https://api.example.com/v1/foo
+//   4. named route     /r/anthropic/v1/messages     (via ROUTES env)
 //
-// Forms 2 and 3 share the /r/ prefix, so they are disambiguated by looking at
-// what follows: something that parses as an absolute URL is form 2, anything
-// else is a route name.
+// Bridge headers are deliberately separate from the public URL forms. They
+// keep the target out of query strings and access-log URLs used by pool relays.
 
 import { badRequest, notFound } from './core.js';
 
@@ -37,11 +36,40 @@ function buildUrl(raw) {
   return url;
 }
 
+function buildBridgeUrl(rawTarget, rawPath) {
+  const origin = buildUrl(rawTarget);
+  if (
+    origin.pathname !== '/' ||
+    origin.search ||
+    origin.hash ||
+    origin.username ||
+    origin.password
+  ) {
+    throw badRequest('invalid_bridge_target', 'x-bridge-target must be a bare http(s) origin');
+  }
+
+  const path = rawPath || '/';
+  if (!path.startsWith('/') || path.startsWith('//')) {
+    throw badRequest('invalid_bridge_path', 'x-bridge-path must be an origin-form path');
+  }
+  return new URL(path, origin.origin);
+}
+
 export function createResolver(config) {
   const { routes } = config;
   const routeNames = Object.keys(routes).sort((a, b) => b.length - a.length);
 
-  return function resolveTarget(requestUrl, { absoluteTarget = null } = {}) {
+  return function resolveTarget(
+    requestUrl,
+    { absoluteTarget = null, bridgeTarget = null, bridgePath = null } = {},
+  ) {
+    if (bridgeTarget !== null) {
+      return {
+        url: buildBridgeUrl(bridgeTarget, bridgePath),
+        matchedBy: 'bridge',
+      };
+    }
+
     // --- 1. absolute-form ---------------------------------------------------
     // The target comes from the raw request line, passed in by the adapter.
     // It is NOT derived from request.url: on a Web Request that field is always
@@ -112,22 +140,10 @@ export function createResolver(config) {
       );
     }
 
-    // --- 4. query param -----------------------------------------------------
-    const fromQuery = searchParams.get('url');
-    if (fromQuery) {
-      const url = buildUrl(fromQuery);
-      // The rest of the query is caller payload and belongs upstream; only the
-      // `url` param itself is skipped.
-      for (const [k, v] of searchParams) {
-        if (k === 'url') continue;
-        url.searchParams.append(k, v);
-      }
-      return { url, matchedBy: 'query' };
-    }
 
     throw badRequest(
       'missing_target',
-      'No target. Use /r/https://host/path, /r/<route>/path, /?url=<encoded>, or absolute-form request.',
+      'No target. Use x-bridge-target/x-bridge-path, /r/https://host/path, /r/<route>/path, or absolute-form request.',
     );
   };
 }

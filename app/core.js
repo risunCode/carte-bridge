@@ -194,6 +194,9 @@ export function loadConfig(env = environment, { onWarn = () => {} } = {}) {
     // budget, a single REQUEST_TIMEOUT_MS would guillotine every SSE stream
     // that legitimately runs for minutes.
     streamIdleTimeoutMs: int(env.STREAM_IDLE_TIMEOUT_MS, 60000, { min: 1 }),
+    // SSE comment frames keep otherwise-quiet serverless connections alive
+    // without changing the event payload delivered to the client.
+    streamHeartbeatMs: int(env.STREAM_HEARTBEAT_MS, 15000, { min: 0 }),
     maxBufferBytes: int(env.MAX_BUFFER_BYTES, 1048576, { min: 0 }),
     maxRedirects: int(env.MAX_REDIRECTS, 5, { min: 0, max: 20 }),
 

@@ -56,7 +56,12 @@ const FORWARDING_HEADERS = new Set([
 ]);
 
 // Bridge-internal, must never reach upstream.
-const INTERNAL_HEADERS = new Set(['x-bridge-peer', 'x-bridge-hop']);
+const INTERNAL_HEADERS = new Set([
+  'x-bridge-peer',
+  'x-bridge-hop',
+  'x-bridge-target',
+  'x-bridge-path',
+]);
 
 // Response headers that describe the upstream connection or an encoding the
 // runtime already undid.
@@ -232,11 +237,13 @@ function recombineStream(reader, chunks) {
   });
 }
 
-// Abort the stream if no chunk arrives within idleMs. The timer re-arms on
-// every chunk, so a slow-but-alive stream survives while a stalled one is cut.
-function withIdleTimeout(stream, idleMs, onIdle) {
+// Abort the stream if no chunk arrives within idleMs. SSE responses may also
+// receive comment heartbeats while upstream is quiet; those are valid SSE and
+// keep serverless connections alive without buffering or rewriting data events.
+function withIdleTimeout(stream, idleMs, onIdle, { heartbeatMs = 0 } = {}) {
   const reader = stream.getReader();
   let timer = null;
+  let heartbeatTimer = null;
   let finished = false;
 
   const clear = () => {
@@ -244,12 +251,16 @@ function withIdleTimeout(stream, idleMs, onIdle) {
       clearTimeout(timer);
       timer = null;
     }
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
   };
 
   return new ReadableStream({
     start(controller) {
       const arm = () => {
-        clear();
+        clearTimeout(timer);
         timer = setTimeout(async () => {
           if (finished) return;
           finished = true;
@@ -258,6 +269,7 @@ function withIdleTimeout(stream, idleMs, onIdle) {
           } catch {
             /* already gone */
           }
+          clear();
           onIdle();
           try {
             controller.error(new BridgeError(504, 'upstream_timeout', 'Upstream stream stalled'));
@@ -265,11 +277,18 @@ function withIdleTimeout(stream, idleMs, onIdle) {
             /* controller already closed */
           }
         }, idleMs);
-        // Never hold the event loop open just for this timer.
         if (typeof timer.unref === 'function') timer.unref();
       };
 
       arm();
+      if (heartbeatMs > 0) {
+        const heartbeat = new TextEncoder().encode(': bridge-heartbeat\n\n');
+        heartbeatTimer = setInterval(() => {
+          if (!finished) controller.enqueue(heartbeat);
+        }, heartbeatMs);
+        if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref();
+      }
+
       (async () => {
         try {
           for (;;) {
@@ -476,13 +495,17 @@ export function createForwarder(config, { guard, log }) {
 
       const clientHeaders = buildClientHeaders(res.headers, config.corsOrigin);
       const hasBody = res.body && method !== 'HEAD' && res.status !== 204 && res.status !== 304;
+      const isEventStream = clientHeaders.get('content-type')?.toLowerCase().startsWith('text/event-stream');
 
       return {
         status: res.status,
         headers: clientHeaders,
         body: hasBody
-          ? withIdleTimeout(res.body, config.streamIdleTimeoutMs, () =>
-              log.warn('stream idle timeout', { url: target.toString() }),
+          ? withIdleTimeout(
+              res.body,
+              config.streamIdleTimeoutMs,
+              () => log.warn('stream idle timeout', { url: target.toString() }),
+              { heartbeatMs: isEventStream ? config.streamHeartbeatMs : 0 },
             )
           : null,
         upstreamUrl: target.toString(),

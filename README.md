@@ -35,11 +35,13 @@ Four accepted shapes, all working on every platform.
 
 | Shape | Example |
 |---|---|
+| Bridge relay headers | `x-bridge-target: https://api.example.com` + `x-bridge-path: /v1/foo` |
 | Path prefix | `GET /r/https://api.example.com/v1/foo` |
 | Named route | `GET /r/gh/repos/nodejs/node` (with `ROUTES` set) |
-| Query param | `GET /?url=https%3A%2F%2Fapi.example.com%2Fv1%2Ffoo` |
 | Absolute-form | `GET http://api.example.com/v1/foo` (proxy-style clients) |
 
+Bridge relay headers are the internal pool contract. The target is deliberately
+not placed in a query string, where it can leak into access logs and CDN URLs.
 Everything after the target is passed through: path, query, method, body,
 headers. A POST stays a POST. An SSE stream stays an SSE stream.
 
@@ -132,8 +134,7 @@ The bridge speaks two transports and picks the best one its runtime can offer.
 
 | Transport | Where | Shape |
 |---|---|---|
-| **CONNECT tunnel** | Docker, Railway, VPS, local (`server.js`) | `CONNECT host:port` → a raw TCP tunnel. No HTTP relay in the path. |
-| **HTTP relay** | Vercel, Netlify, Deno Deploy | `GET /r/<url>` or `GET /?url=<url>` |
+| **HTTP relay** | Vercel, Netlify, Deno Deploy, Cloudflare Workers | `x-bridge-target` + `x-bridge-path` |
 
 The CONNECT path is a real forward proxy: the client asks for `host:port`, the
 bridge dials it, and bytes are piped both ways. The serverless entrypoints have
@@ -156,6 +157,7 @@ Every variable is optional.
 | `FALLBACKS` | *empty* | JSON map of prefix → origins tried in order |
 | `REQUEST_TIMEOUT_MS` | `30000` | Time to first byte from upstream |
 | `STREAM_IDLE_TIMEOUT_MS` | `60000` | Max gap between bytes once streaming |
+| `STREAM_HEARTBEAT_MS` | `15000` | SSE comment heartbeat while upstream is quiet; `0` disables |
 | `MAX_BUFFER_BYTES` | `1048576` | Bodies under this are buffered so a retry is possible |
 | `MAX_REDIRECTS` | `5` | Redirect hops, each re-validated by the SSRF guard |
 | `CORS_ORIGIN` | *empty* | `*` or a specific origin. Empty = no CORS headers |
@@ -243,19 +245,34 @@ its literal layer only. `169.254.169.254`, `127.0.0.1` and the private ranges ar
 still refused, but a *public hostname that resolves to* a private address is not
 caught. On Deno, set `ALLOWED_HOSTS` if the instance is public.
 
+### Cloudflare Workers
+
+```bash
+npx wrangler deploy --config cloudflare/wrangler.toml
+```
+
+The Worker entrypoint uses the same platform-neutral app and accepts the
+`x-bridge-target` and `x-bridge-path` headers used by Cartethyia's bridge pool.
+Cloudflare has no hard wall-clock limit for an HTTP-triggered Worker while the
+client remains connected, so it is the preferred serverless target for long
+HTTP/SSE streams. Its runtime has no `node:dns`, so literal SSRF checks remain
+active but `ALLOWED_HOSTS` is strongly recommended for public deployments.
+
 ### What works where
 
-| | Railway | Docker / VPS | Vercel | Netlify | Deno |
-|---|---|---|---|---|---|
-| HTTP bridge | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Streaming (SSE) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Unbounded request duration | ✅ | ✅ | ❌ ceiling | ❌ ceiling | ✅ |
-| SSRF guard: literal IPs | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SSRF guard: DNS resolution | ✅ | ✅ | ✅ | ✅ | ❌ no `node:dns` |
+| | Railway | Docker / VPS | Vercel | Netlify | Deno | Cloudflare |
+|---|---|---|---|---|---|---|
+| HTTP bridge | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Streaming (SSE) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Unbounded request duration | ✅ | ✅ | ❌ ceiling | ❌ ceiling | ❌ eviction possible | ✅ HTTP request |
+| SSRF guard: literal IPs | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SSRF guard: DNS resolution | ✅ | ✅ | ✅ | ✅ | ❌ no `node:dns` | ❌ no `node:dns` |
 
-Serverless functions have a wall-clock limit (`maxDuration`, set to 60s in
-`vercel.json`). Streaming starts delivering immediately, but one request cannot
-outlive that ceiling. Check the current limits for your plan.
+Vercel is configured for a 300-second maximum in `vercel.json`; the effective
+limit still depends on the account plan. Netlify streaming functions have a
+60-second execution limit and a 20 MB response limit. Deno and Cloudflare can
+keep active streams alive longer, but deployments, runtime updates, and
+instance eviction can still close a connection, so clients must reconnect.
 
 ---
 
@@ -268,14 +285,15 @@ app/
   core.js              typed errors, leveled logger, env -> frozen config
   policy.js            the gate: where a request may reach (SSRF)
   forward.js           header sanitization + fetch, redirects, streaming, failover
-  target.js            the four accepted URL shapes
+  target.js            bridge headers + URL target resolution
   stats.js             byte counters, speed window, egress IP lookup
   status.js            renders the plain-text status page
   handler.js           the handler
   adapters.js          Node I/O translation
 api/index.js           Vercel entrypoint
-netlify/bridge.js       Netlify entrypoint
+netlify/bridge.js      Netlify entrypoint
 deno/main.js           Deno entrypoint
+cloudflare/worker.js   Cloudflare Workers entrypoint
 ```
 
 `app/` is the core and it never imports a platform SDK — or anything from

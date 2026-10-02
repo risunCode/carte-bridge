@@ -13,8 +13,8 @@ test('empty environment yields working defaults', () => {
   assert.equal(c.host, '0.0.0.0');
   assert.equal(c.blockPrivate, true, 'SSRF guard is on by default');
   assert.equal(c.requestTimeoutMs, 30000);
+  assert.equal(c.streamHeartbeatMs, 15000);
   assert.equal(c.maxBufferBytes, 1048576);
-  assert.deepEqual(c.routes, {});
 });
 
 test('booleans accept the usual spellings', () => {

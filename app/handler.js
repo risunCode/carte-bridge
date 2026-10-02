@@ -47,13 +47,16 @@ function errorResponse(err, { corsOrigin }) {
   );
 }
 
-function isControlRequest(url) {
+function isControlRequest(url, hasBridgeTarget) {
+  // The bare root is the status page. A bridge relay request is identified by
+  // its internal target header, while the retired query form must be rejected
+  // instead of silently returning the status page.
+  if (url.pathname === '/') return !hasBridgeTarget && !url.searchParams.has('url');
   return (
     url.pathname === '/healthz' ||
     url.pathname === '/readyz' ||
     url.pathname === '/__bridge' ||
-    url.pathname === '/stats' ||
-    url.pathname === '/'
+    url.pathname === '/stats'
   );
 }
 
@@ -111,6 +114,7 @@ async function handleControl(url, config, context) {
       timeouts: {
         requestMs: config.requestTimeoutMs,
         streamIdleMs: config.streamIdleTimeoutMs,
+        streamHeartbeatMs: config.streamHeartbeatMs,
       },
     }, { headers: { 'cache-control': 'no-store' } });
   }
@@ -120,11 +124,12 @@ async function handleControl(url, config, context) {
   return Response.json(
     {
       usage: {
+        bridgeTarget: 'x-bridge-target: https://api.example.com',
+        bridgePath: 'x-bridge-path: /v1/foo',
         pathPrefix: 'GET /r/https://api.example.com/v1/foo',
         namedRoute: Object.keys(config.routes).length
           ? `GET /r/${Object.keys(config.routes)[0]}/v1/foo`
           : null,
-        query: 'GET /?url=https%3A%2F%2Fapi.example.com%2Fv1%2Ffoo',
         absoluteForm: 'GET http://api.example.com/v1/foo (proxy-style clients)',
       },
       routes: config.routes,
@@ -188,9 +193,15 @@ export function createApp(options = {}) {
     }
 
     try {
+      const bridgeTarget = request.headers.get('x-bridge-target');
+      const bridgePath = request.headers.get('x-bridge-path');
+
       // The status page is GET-only; a stray POST to / should not look like a
       // successful page fetch, and every other control path is JSON.
-      if (isControlRequest(url) && (url.pathname !== '/' || request.method === 'GET')) {
+      if (
+        isControlRequest(url, bridgeTarget !== null) &&
+        (url.pathname !== '/' || request.method === 'GET')
+      ) {
         return handleControl(url, config, {
           stats,
           getEgressIp,
@@ -200,6 +211,8 @@ export function createApp(options = {}) {
 
       const { url: target, matchedBy, route } = resolveTarget(url, {
         absoluteTarget: context.absoluteTarget ?? null,
+        bridgeTarget,
+        bridgePath,
       });
 
       // A bridge that forwards to itself recurses until something gives out.
