@@ -7,11 +7,9 @@ database.
 It forwards a request to an upstream URL you name, streams the response back,
 and gets out of the way.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Frisuncode%2Fcarte-bridge)
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Frisuncode%2Fcarte-bridge)
-[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/risuncode/carte-bridge)
-
-> Replace `risuncode/carte-bridge` with your own repo path once you push.
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2FrisunCode%2Fcarte-bridge)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FrisunCode%2Fcarte-bridge)
+[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/risunCode/carte-bridge)
 
 ---
 
