@@ -24,8 +24,9 @@ node server.js
 curl "http://localhost:8080/r/https://api.github.com/repos/nodejs/node" | head -c 200
 ```
 
-That is the whole setup. **No username, no password, no config.** The bridge
-boots open — anyone with the URL can use it.
+That is the whole setup for open mode. **No username or password is required**
+until `BRIDGE_AUTH_MODE=basic` is enabled. Anyone with the URL can use an open
+relay, so add the auth variables before publishing it publicly.
 
 ---
 
@@ -205,6 +206,48 @@ All providers use the same application and the same environment variables.
 Start with the open mode if the relay is protected by a private network or an
 upstream firewall. Set `BRIDGE_AUTH_MODE=basic` when the public endpoint needs a
 second access gate.
+
+<details>
+<summary><strong>Fast path: Railway HTTPS + Cartethyia bridge pool</strong></summary>
+
+If Railway gives you a URL such as
+`https://my-bridge-production.up.railway.app`, configure Railway Variables:
+
+```env
+BRIDGE_AUTH_MODE=basic
+BRIDGE_USERNAME=cartela
+BRIDGE_PASSWORD=buwok
+BLOCK_PRIVATE=true
+```
+
+Then create the Cartethyia network pool with exactly:
+
+```text
+Kind:       bridge
+Endpoint:   https://my-bridge-production.up.railway.app
+Credential: cartela:buwok
+```
+
+Do not create this as an `http`, `https`, or `socks5` pool. `bridge` tells
+Cartethyia to try CONNECT first and then fall back to the bridge header relay
+when the hosted runtime returns `405 Method Not Allowed`.
+
+If the form has no separate **Credential** field, use the URL form instead:
+
+```text
+https://cartela:buwok@my-bridge-production.up.railway.app
+```
+
+Check the deployment before adding it to a pool:
+
+```bash
+curl -i https://my-bridge-production.up.railway.app/healthz
+```
+
+`/healthz` is public for platform probes. Forwarding requests still require
+`x-bridge-auth`, which Cartethyia generates from the pool credential.
+
+</details>
 
 <details>
 <summary><strong>Railway — long-lived Node server with CONNECT support</strong></summary>
